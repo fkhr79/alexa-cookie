@@ -132,8 +132,11 @@ function createProxyRequest(initialHeaders = {}) {
 
 const proxyModule = loadProxyModule();
 const formerDataStorePath = path.join(os.tmpdir(), `alexa-cookie-proxy-callback-test-${Date.now()}.json`);
+const storedFormerDataPath = path.join(os.tmpdir(), `alexa-cookie-proxy-callback-store-test-${Date.now()}.json`);
 let callbackErr;
 let callbackData;
+let storedCallbackData;
+let storedProxyRequestCookies;
 
 try {
     const input = {
@@ -172,6 +175,26 @@ try {
     capturedProxyOptions.onProxyRes(proxyRes, req, {});
     const proxyRequestCookies = parseCookies(proxyReq.getHeader('cookie'));
     const callbackCookies = parseCookies(callbackData && callbackData.loginCookie);
+
+    const storedFormerData = {
+        storeVersion: 4,
+        frc: 'FRC_FROM_STORE',
+        'map-md': 'MAPMD_FROM_STORE',
+        deviceId: 'DEVICE_ID_FROM_STORE'
+    };
+    fs.writeFileSync(storedFormerDataPath, JSON.stringify(storedFormerData), 'utf8');
+    proxyModule.initAmazonProxy(Object.assign({}, input, {
+        formerDataStorePath: storedFormerDataPath,
+        formerRegistrationData: undefined
+    }), (_err, data) => {
+        storedCallbackData = data;
+    });
+    const storedProxyReq = createProxyRequest({
+        host: 'www.amazon.de'
+    });
+    capturedProxyOptions.onProxyReq(storedProxyReq, req, {});
+    storedProxyRequestCookies = parseCookies(storedProxyReq.getHeader('cookie'));
+    capturedProxyOptions.onProxyRes(createProxyResponse(responseLocation), req, {});
 
     line('TEST: proxy success callback');
     line('');
@@ -238,6 +261,21 @@ try {
         assert.strictEqual(typeof callbackData.verifier, 'string');
         assert.ok(callbackData.verifier.length > 20);
     });
+    recordAssertion('callback reuses frc from configured former data store path', () => {
+        assert.strictEqual(storedCallbackData.frc, storedFormerData.frc);
+    });
+    recordAssertion('callback reuses map-md from configured former data store path', () => {
+        assert.strictEqual(storedCallbackData['map-md'], storedFormerData['map-md']);
+    });
+    recordAssertion('callback reuses deviceId from configured former data store path', () => {
+        assert.strictEqual(storedCallbackData.deviceId, storedFormerData.deviceId);
+    });
+    recordAssertion('proxy request reuses frc from configured former data store path', () => {
+        assert.strictEqual(storedProxyRequestCookies.frc, storedFormerData.frc);
+    });
+    recordAssertion('proxy request reuses map-md from configured former data store path', () => {
+        assert.strictEqual(storedProxyRequestCookies['map-md'], storedFormerData['map-md']);
+    });
     line('');
     line('RESULT: PASS');
     writeOutput();
@@ -250,4 +288,5 @@ try {
     throw err;
 } finally {
     fs.rmSync(formerDataStorePath, { force: true });
+    fs.rmSync(storedFormerDataPath, { force: true });
 }
