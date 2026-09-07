@@ -245,6 +245,10 @@ function AlexaCookie() {
                     csrfTry();
                     return;
                 }
+                if (!csrf) {
+                    callback && callback(new Error('No csrf found in cookies'), null);
+                    return;
+                }
                 callback && callback(null, {
                     cookie: cookie,
                     csrf: csrf

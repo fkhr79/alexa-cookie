@@ -334,6 +334,68 @@ async function runCsrfFallbackScenario() {
     line('');
 }
 
+async function runMissingCsrfScenario() {
+    const calls = [];
+    const cookieModule = loadCookieModule({
+        https: createFakeHttps((options) => {
+            if (options.path === '/auth/token') return tokenResponse({ access_token: 'ACCESS_TOKEN_AFTER_REFRESH' });
+            if (options.path === '/ap/exchangetoken/cookies') return exchangeResponse(amazonDeCookies());
+            if (options.host === 'api.amazonalexa.com' && options.path === '/v1/devices/@self/capabilities') {
+                return { statusCode: 204, headers: {}, body: '' };
+            }
+            if ([
+                '/api/language',
+                '/spa/index.html',
+                '/api/devices-v2/device?cached=false',
+                '/templates/oobe/d-device-pick.handlebars',
+                '/api/strings'
+            ].includes(options.path)) {
+                return { statusCode: 200, headers: {}, body: '{}' };
+            }
+            throw new Error(`Unexpected request: ${options.method || 'GET'} ${options.host}${options.path}`);
+        }, calls)
+    });
+    const result = await refreshResult(cookieModule, baseOptions(baseFormerRegistrationData()));
+    const paths = calls.map((call) => call.path);
+    const tokenCall = calls.find((call) => call.path === '/auth/token');
+    const exchangeCalls = calls.filter((call) => call.path === '/ap/exchangetoken/cookies');
+    const csrfPaths = paths.filter((requestPath) => [
+        '/api/language',
+        '/spa/index.html',
+        '/api/devices-v2/device?cached=false',
+        '/templates/oobe/d-device-pick.handlebars',
+        '/api/strings'
+    ].includes(requestPath));
+
+    line('SCENARIO: no csrf endpoint returns a csrf cookie');
+    line(`observed csrf requests: ${csrfPaths.join(', ')}`);
+    line(`error message: ${result.err && result.err.message}`);
+    line('');
+    recordAssertion('missing csrf returns a clear error', () => {
+        assert.strictEqual(result.err && result.err.message, 'Error getting csrf for amazon.de');
+    });
+    recordAssertion('missing csrf returns no data', () => {
+        assert.strictEqual(result.data, null);
+    });
+    recordAssertion('missing csrf tries all csrf fallback endpoints', () => {
+        assert.deepStrictEqual(csrfPaths, [
+            '/api/language',
+            '/spa/index.html',
+            '/api/devices-v2/device?cached=false',
+            '/templates/oobe/d-device-pick.handlebars',
+            '/api/strings'
+        ]);
+    });
+    recordAssertion('missing csrf refresh request has expected endpoint and form body', () => {
+        assertRefreshTokenRequest(tokenCall);
+    });
+    recordAssertion('missing csrf exchange requests have expected endpoint and form body', () => {
+        assert.ok(exchangeCalls.length >= 1);
+        exchangeCalls.forEach(assertExchangeRequest);
+    });
+    line('');
+}
+
 (async () => {
     try {
         line('TEST: refresh error and csrf behavior');
@@ -347,6 +409,7 @@ async function runCsrfFallbackScenario() {
         await runMissingAccessTokenScenario();
         await runMissingExchangeDomainScenario();
         await runCsrfFallbackScenario();
+        await runMissingCsrfScenario();
         line('RESULT: PASS');
         writeOutput();
     } catch (err) {
